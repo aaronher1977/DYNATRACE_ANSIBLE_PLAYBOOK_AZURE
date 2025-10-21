@@ -1,0 +1,52 @@
+
+Run it for real
+=================
+
+# tweak variables inline if you want
+ansible-playbook install_dynatrace_local.yml -v \
+  -e app_name=myapp \
+  -e network_zone=nz-prod-general-azure \
+  -e monitoring_mode=fullstack
+
+
+
+
+
+ansible-playbook install_dynatrace_local.yml -v \
+  -e installer_path=/opt/dynatrace/Dynatrace-OneAgent-Linux-1.303.50.sh
+
+
+
+
+
+Verify the install
+=======================
+
+# directory and marker
+ls -l /opt/dynatrace
+ls -l /opt/dynatrace/oneagent
+
+# service (name may vary by version)
+systemctl status oneagent || systemctl status dynatrace-oneagent
+journalctl -u oneagent --no-pager -n 200 || true
+
+
+Troubleshooting tips
+===================
+systemctl status dynatrace-oneagent
+
+SELinux Denials
+--------------
+sudo ausearch -m avc -ts recent
+sudo journalctl -xe
+
+Installer permissions: Ensure the .sh is executable:
+====================================================
+sudo chmod 0755 /opt/dynatrace/Dynatrace-OneAgent-*.sh
+
+Re-run the installer during testing: remove the guard path:
+========================================================
+sudo rm -rf /opt/dynatrace/oneagent
+
+
+
