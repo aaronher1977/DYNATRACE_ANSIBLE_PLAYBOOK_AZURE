@@ -1,0 +1,43 @@
+ - name: Test sudo access
+      command: whoami
+      register: result
+      delegate_to: "{{ target_host }}"  
+
+    - name: Show sudo result
+      debug:
+        var: result.stdout
+      delegate_to: "{{ target_host }}"
+
+    - name: Create directory on target
+      file:
+        path: /opt/dynatrace
+        state: directory
+        mode: '0755'
+      delegate_to: "{{ target_host }}"
+
+    - name: Download installer
+      get_url:
+        url: "{{ dynatrace_base_url }}/api/v1/deployment/installer/agent/unix/default/latest?networkZone={{ network_zone }}"
+        dest: /opt/dynatrace
+        headers:
+          Authorization: "{{ dynatrace_api_token }}"
+      delegate_to: "{{ target_host }}"
+    
+    - name: Get Dynatrace installer script name
+      shell: "ls /opt/dynatrace/Dynatrace-OneAgent*.sh"
+      register: installer_script
+      delegate_to: "{{ target_host }}"
+
+
+    - name: Install Dynatrace OneAgent
+      ansible.builtin.shell: >
+        /bin/sh {{ installer_script.stdout }} 
+        --set-monitoring-mode={{ monitoring_mode }} 
+        --set-app-log-content-access=true 
+        --set-network-zone={{ network_zone }} 
+        --set-host-group=hg-{{ app_name }}  
+        --set-server="{{ set_server_string }}"
+      args:
+        chdir: /opt/dynatrace
+      become: true
+      delegate_to: "{{ target_host }}"
