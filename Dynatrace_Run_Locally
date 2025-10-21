@@ -1,0 +1,112 @@
+---
+- name: Install Dynatrace OneAgent (local, no download)
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  vars:
+    # === Inputs you can tweak ===
+    app_name: "myapp"
+    network_zone: "nz-prod-general-azure"      # or your zone
+    monitoring_mode: "fullstack"               # or "infrastructure"
+    set_server_string: ""                      # e.g. "activegate.company.com:9999" or leave empty
+
+    # === Local installer usage ===
+    installer_dir: "/opt/dynatrace"
+    # if you know the exact file name, set it; otherwise the play will auto-pick the newest Dynatrace-OneAgent*.sh in installer_dir
+    installer_path: "/opt/dynatrace/Dynatrace-OneAgent-Linux-1.3xx.yy.sh"
+
+    # path that indicates install already done (prevents re-run)
+    agent_install_path_guard: "/opt/dynatrace/oneagent"
+
+  pre_tasks:
+    - name: Who am I (sanity check)
+      command: whoami
+      register: whoami_out
+
+    - name: Show current user
+      debug:
+        var: whoami_out.stdout
+
+  tasks:
+    - name: Ensure installer directory exists
+      file:
+        path: "{{ installer_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Verify installer exists if installer_path is set
+      stat:
+        path: "{{ installer_path }}"
+      register: st_installer
+      when: installer_path is defined
+
+    - name: Fail if installer_path is set but missing
+      fail:
+        msg: "Installer not found at {{ installer_path }}. Place the .sh there or update installer_path."
+      when:
+        - installer_path is defined
+        - not st_installer.stat.exists
+
+    - name: Auto-discover installer when installer_path not set
+      find:
+        paths: "{{ installer_dir }}"
+        patterns: "Dynatrace-OneAgent*.sh"
+        file_type: file
+      register: found_installers
+      when: installer_path is not defined or installer_path | length == 0
+
+    - name: Fail if no installer found in installer_dir
+      fail:
+        msg: "No Dynatrace-OneAgent*.sh found in {{ installer_dir }}. Copy it there first."
+      when:
+        - installer_path is not defined or installer_path | length == 0
+        - (found_installers.files | length) == 0
+
+    - name: Pick installer (explicit or newest found)
+      set_fact:
+        selected_installer: >-
+          {{
+            (installer_path
+              if (installer_path is defined and installer_path | length > 0)
+              else (found_installers.files | sort(attribute='mtime') | last).path)
+          }}
+
+    - name: Show installer selected
+      debug:
+        msg: "Using installer: {{ selected_installer }}"
+
+    - name: Run Dynatrace OneAgent installer (idempotent)
+      shell: >
+        /bin/sh "{{ selected_installer }}"
+        --set-monitoring-mode={{ monitoring_mode }}
+        --set-app-log-content-access=true
+        --set-network-zone={{ network_zone }}
+        --set-host-group=hg-{{ app_name }}
+        {% if set_server_string | length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+      args:
+        chdir: "{{ installer_dir }}"
+        creates: "{{ agent_install_path_guard }}"
+      register: install_out
+
+    - name: Show installer output (first run)
+      debug:
+        var: install_out.stdout_lines
+      when: install_out is defined and install_out.stdout is defined
+
+    - name: Enable and start Dynatrace OneAgent service if present
+      service:
+        name: oneagent
+        enabled: true
+        state: started
+      register: svc_out
+      failed_when: false  # service name differs sometimes; don't fail the play
+
+    - name: Note service handling result
+      debug:
+        msg: "Service attempt result: {{ svc_out | default('service not present') }}"
+      when: svc_out is defined
+
+  tags:
+    - dynatrace
