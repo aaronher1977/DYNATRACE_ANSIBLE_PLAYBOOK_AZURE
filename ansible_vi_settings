@@ -1,0 +1,20 @@
+" ---------- Ansible / YAML Settings ----------
+syntax on                  " Enable syntax highlighting
+filetype plugin indent on  " Enable filetype detection & indentation
+set tabstop=2              " Tabs are 2 spaces
+set shiftwidth=2           " Indent by 2 spaces
+set expandtab              " Use spaces instead of tabs
+set autoindent             " Maintain indent level
+set smartindent            " Smarter indenting
+set number                 " Show line numbers
+set background=dark        " Better color contrast
+set cursorline             " Highlight current line
+set showmatch              " Highlight matching brackets
+
+" ---------- Ansible-Specific ----------
+autocmd FileType yaml setlocal ts=2 sw=2 expandtab
+autocmd BufNewFile,BufRead *.yml,*.yaml set filetype=yaml.ansible
+
+" Optional: highlight trailing spaces (common YAML issue)
+highlight ExtraWhitespace ctermbg=red guibg=red
+match ExtraWhitespace /\s\+$/
