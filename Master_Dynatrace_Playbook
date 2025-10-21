@@ -1,0 +1,106 @@
+---
+- name: Install Dynatrace OneAgent
+  hosts: "{{ target_host | default('all') }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    # === Required inputs you’ll likely override at runtime or inventory ===
+    app_name: "myapp"
+    network_zone: "nz-prod-general-azure"      # example
+    monitoring_mode: "fullstack"               # or "infrastructure"
+    set_server_string: ""                      # optional; e.g. "activegate.company.com:9999"
+
+    # === Installer download ===
+    # You said to use this as the Dynatrace download location:
+    installer_url: "https://ivanti.pi.com/configmgmt/Linux/Agents/"  # must resolve to a .sh file
+    installer_dir: "/opt/dynatrace"
+
+  pre_tasks:
+    - name: Sanity check that installer_url looks like a file
+      assert:
+        that:
+          - installer_url is match(".*\\.sh(\\?.*)?$")
+        fail_msg: >
+          'installer_url' must point directly to a .sh installer (e.g., Dynatrace-OneAgent-Linux-*.sh).
+          Current value: {{ installer_url }}
+      when: installer_url is defined
+
+    - name: Who am I on the target (sanity check)
+      command: whoami
+      register: whoami_out
+
+    - name: Show current user
+      debug:
+        var: whoami_out.stdout
+
+  tasks:
+    - name: Ensure installer directory exists
+      file:
+        path: "{{ installer_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download Dynatrace OneAgent installer
+      get_url:
+        url: "{{ installer_url }}"
+        dest: "{{ installer_dir }}/"
+        mode: '0755'
+        # validate_certs: false   # uncomment if you must bypass TLS verification (not recommended)
+      register: dl
+
+    - name: Find downloaded installer script (*.sh)
+      find:
+        paths: "{{ installer_dir }}"
+        patterns: "Dynatrace-OneAgent*.sh"
+        file_type: file
+      register: found_installers
+
+    - name: Fail if installer script is not present
+      fail:
+        msg: >
+          Could not locate a Dynatrace OneAgent installer script in {{ installer_dir }}.
+          Download result was: {{ dl.dest | default('n/a') }}
+      when: found_installers.files | length == 0
+
+    - name: Pick the newest installer script
+      set_fact:
+        installer_script: "{{ (found_installers.files | sort(attribute='mtime') | last).path }}"
+
+    - name: Show installer selected
+      debug:
+        msg: "Using installer: {{ installer_script }}"
+
+    - name: Run Dynatrace OneAgent installer (idempotent)
+      shell: >
+        /bin/sh "{{ installer_script }}"
+        --set-monitoring-mode={{ monitoring_mode }}
+        --set-app-log-content-access=true
+        --set-network-zone={{ network_zone }}
+        --set-host-group=hg-{{ app_name }}
+        {% if set_server_string|length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+      args:
+        chdir: "{{ installer_dir }}"
+        creates: "/opt/dynatrace/oneagent"   # prevents re-running if agent already installed
+      register: install_out
+
+    - name: Show installer output (first run)
+      debug:
+        var: install_out.stdout_lines
+      when: install_out is defined and install_out.stdout is defined
+
+    - name: Enable and start Dynatrace OneAgent service if present
+      service:
+        name: oneagent
+        enabled: true
+        state: started
+      register: svc_out
+      failed_when: false    # not all distros expose 'oneagent' service name consistently
+
+    - name: Note service handling result
+      debug:
+        msg: "Service attempt result: {{ svc_out | default('service not present') }}"
+      when: svc_out is defined
+
+  tags:
+    - dynatrace
