@@ -1,0 +1,12 @@
+cd /opt
+
+mkdir dynatrace
+file name = Dynatrace-OneAgent-Linux.sh
+  \\fidev.com\infotech\Software\AppsDev\Dynatrace\Installable\2024  
+cd dynatrace
+
+cp /tmp/Dynatrace-OneAgent-Linux-nz-fidev-general-azure-1.303.50.20241118-133432.sh .
+
+cp /tmp/dt-root.cert.pem.4 .
+
+/bin/sh Dynatrace-OneAgent-Linux-nz-fidev-general-azure-1.303.50.20241118-133432.sh --set-monitoring-mode=fullstack --set-app-log-content-access=true --set-network-zone=nz-fidev-general-azure --set-host-group=hg-ansible-dev
