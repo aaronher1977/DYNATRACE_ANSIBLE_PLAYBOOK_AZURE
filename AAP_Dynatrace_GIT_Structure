@@ -1,0 +1,5 @@
+dynatrace-oneagent/
+├─ site.yml
+├─ roles/ (optional)
+└─ files/
+   └─ Dynatrace-OneAgent-Linux-1.303.50.sh
