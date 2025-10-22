@@ -13,7 +13,7 @@
 
     # === Installer download ===
     # You said to use this as the Dynatrace download location:
-    installer_url: "https://ivanti.pi.com/configmgmt/Linux/Agents/"  # must resolve to a .sh file
+    installer_url: "file://fi.com/infotech/Software/Infrastructure/Dynatrace/Dynatrace-OneAgent-Linux.sh"  # must resolve to a .sh file
     installer_dir: "/opt/dynatrace"
 
   pre_tasks:
