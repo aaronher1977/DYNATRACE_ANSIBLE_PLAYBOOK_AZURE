@@ -1,0 +1,67 @@
+---
+- name: Install Dynatrace OneAgent (AAP-run, ships installer in project)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    app_name: "myapp"
+    network_zone: "nz-prod-general-azure"
+    monitoring_mode: "fullstack"
+    set_server_string: ""            # e.g., "activegate.company.com:9999"
+    installer_dir: "/opt/dynatrace"
+    installer_filename: "Dynatrace-OneAgent-Linux-1.303.50.sh"
+    agent_install_path_guard: "/opt/dynatrace/oneagent"
+
+  pre_tasks:
+    - name: Who am I (sanity check)
+      command: whoami
+      register: whoami_out
+
+    - debug:
+        var: whoami_out.stdout
+
+  tasks:
+    - name: Ensure installer directory exists
+      file:
+        path: "{{ installer_dir }}"
+        state: directory
+        mode: '0755'
+
+    # This copies the installer that lives under <project>/files/ to the target
+    - name: Stage OneAgent installer from project files
+      copy:
+        src: "files/{{ installer_filename }}"
+        dest: "{{ installer_dir }}/{{ installer_filename }}"
+        mode: '0755'
+
+    - name: Run Dynatrace OneAgent installer (idempotent)
+      shell: >
+        /bin/sh "{{ installer_dir }}/{{ installer_filename }}"
+        --set-monitoring-mode={{ monitoring_mode }}
+        --set-app-log-content-access=true
+        --set-network-zone={{ network_zone }}
+        --set-host-group=hg-{{ app_name }}
+        {% if set_server_string | length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+      args:
+        chdir: "{{ installer_dir }}"
+        creates: "{{ agent_install_path_guard }}"
+      register: install_out
+
+    - name: Show installer output (first run)
+      debug:
+        var: install_out.stdout_lines
+      when: install_out is defined and install_out.stdout is defined
+
+    - name: Enable and start Dynatrace OneAgent service if present
+      service:
+        name: oneagent
+        enabled: true
+        state: started
+      register: svc_out
+      failed_when: false
+
+    - name: Note service handling result
+      debug:
+        msg: "Service attempt result: {{ svc_out | default('service not present') }}"
+      when: svc_out is defined
