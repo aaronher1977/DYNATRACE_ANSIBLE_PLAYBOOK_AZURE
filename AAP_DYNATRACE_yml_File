@@ -1,0 +1,50 @@
+---
+- name: Install Dynatrace OneAgent
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    app_name: "myapp"
+    network_zone: "nz-prod-general-azure"
+    monitoring_mode: "fullstack"
+    set_server_string: ""
+    installer_dir: "/opt/dynatrace"
+    installer_filename: "Dynatrace-OneAgent-Linux-1.303.50.sh"
+    agent_install_path_guard: "/opt/dynatrace/oneagent"
+
+  tasks:
+    - name: Ensure installer directory exists
+      file:
+        path: "{{ installer_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copy OneAgent installer from project
+      copy:
+        src: "files/{{ installer_filename }}"
+        dest: "{{ installer_dir }}/{{ installer_filename }}"
+        mode: '0755'
+
+    - name: Run Dynatrace OneAgent installer
+      shell: >
+        /bin/sh "{{ installer_dir }}/{{ installer_filename }}"
+        --set-monitoring-mode={{ monitoring_mode }}
+        --set-app-log-content-access=true
+        --set-network-zone={{ network_zone }}
+        --set-host-group=hg-{{ app_name }}
+        {% if set_server_string | length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+      args:
+        chdir: "{{ installer_dir }}"
+        creates: "{{ agent_install_path_guard }}"
+      register: install_out
+
+    - debug:
+        var: install_out.stdout_lines
+
+    - name: Enable and start service
+      service:
+        name: oneagent
+        enabled: true
+        state: started
+      failed_when: false
