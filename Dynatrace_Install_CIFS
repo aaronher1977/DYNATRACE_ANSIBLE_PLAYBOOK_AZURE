@@ -1,0 +1,169 @@
+---
+- name: Install Dynatrace OneAgent (AAP - SMB share fetch)
+  hosts: "{{ target_host | default('all') }}"
+  become: true
+  gather_facts: false
+  tags:
+    - dynatrace
+    - oneagent
+
+  vars:
+    # Defaults - override as extra_vars in Job Template if needed
+    app_name: "myapp"
+    network_zone: "nz-prod-general-azure"
+    monitoring_mode: "fullstack"
+    set_server_string: ""                     # e.g. "activegate.company.com:9999"
+
+    # Installer location on internal share (replace with actual path)
+    smb_share: "//fi.com/infotech/Software/Infrastructure/Dynatrace"
+    smb_mount: "/mnt/dtshare"
+    installer_dir: "/opt/dynatrace"
+    installer_glob: "Dynatrace-OneAgent*.sh"
+    smb_opts: "ro,vers=3.0"
+
+    # These should come from AAP credentials / extra_vars
+    # smb_username: "{{ lookup('env','SMB_USER') }}"
+    # smb_password: "{{ lookup('env','SMB_PASS') }}"
+
+  pre_tasks:
+    - name: Sanity check that smb_share looks like a share
+      ansible.builtin.assert:
+        that:
+          - smb_share is match("^//.+/.+")
+        fail_msg: "smb_share must be an SMB/CIFS style path like //server/share. Current: {{ smb_share }}"
+
+    - name: Who am I on the target (sanity check)
+      ansible.builtin.command: whoami
+      register: whoami_out
+
+    - name: Show current user
+      ansible.builtin.debug:
+        var: whoami_out.stdout
+
+  tasks:
+    - name: Ensure installer directory exists
+      ansible.builtin.file:
+        path: "{{ installer_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Ensure temporary mount point exists
+      ansible.builtin.file:
+        path: "{{ smb_mount }}"
+        state: directory
+        mode: '0755'
+
+    - name: Install cifs-utils (package may differ on some distros)
+      ansible.builtin.package:
+        name: cifs-utils
+        state: present
+
+    - name: Create temporary credentials file for mounting (mode 0600)
+      ansible.builtin.copy:
+        dest: "/tmp/dt_smb_creds_{{ inventory_hostname }}"
+        content: |
+          username={{ smb_username | default('') }}
+          password={{ smb_password | default('') }}
+        mode: '0600'
+      register: smb_creds_file
+      when: smb_username is defined and smb_password is defined
+
+    - name: Mount SMB share
+      ansible.posix.mount:
+        path: "{{ smb_mount }}"
+        src: "{{ smb_share }}"
+        fstype: cifs
+        opts: "{{ smb_opts }},credentials=/tmp/dt_smb_creds_{{ inventory_hostname }}"
+        state: mounted
+      when: smb_username is defined and smb_password is defined
+
+    - name: Mount SMB share (no-cred / anonymous) - fallback
+      ansible.posix.mount:
+        path: "{{ smb_mount }}"
+        src: "{{ smb_share }}"
+        fstype: cifs
+        opts: "{{ smb_opts }}"
+        state: mounted
+      when: smb_username is not defined or smb_password is not defined
+
+    - name: Copy installer from share to installer_dir
+      ansible.builtin.copy:
+        src: "{{ smb_mount }}/{{ installer_glob }}"
+        dest: "{{ installer_dir }}/"
+        mode: '0755'
+        remote_src: true
+      register: copy_result
+      ignore_errors: true
+
+    - name: Fail if installer wasn't copied
+      ansible.builtin.fail:
+        msg: >
+          Could not copy installer from SMB share {{ smb_share }} to {{ installer_dir }}.
+          Last copy result: {{ copy_result | default('n/a') }}
+      when: copy_result is failed or (copy_result is defined and copy_result.dest is not defined)
+
+    - name: Find downloaded/copyed installer script (*.sh)
+      ansible.builtin.find:
+        paths: "{{ installer_dir }}"
+        patterns: "{{ installer_glob }}"
+        file_type: file
+      register: found_installers
+
+    - name: Fail if installer script is not present
+      ansible.builtin.fail:
+        msg: >
+          Could not locate a Dynatrace OneAgent installer script in {{ installer_dir }}.
+      when: found_installers.files | length == 0
+
+    - name: Pick the newest installer script
+      ansible.builtin.set_fact:
+        installer_script: "{{ (found_installers.files | sort(attribute='mtime') | last).path }}"
+
+    - name: Show installer selected
+      ansible.builtin.debug:
+        msg: "Using installer: {{ installer_script }}"
+
+    - name: Run Dynatrace OneAgent installer (idempotent)
+      ansible.builtin.shell: |
+        /bin/sh "{{ installer_script }}" \
+          --set-monitoring-mode={{ monitoring_mode }} \
+          --set-app-log-content-access=true \
+          --set-network-zone={{ network_zone }} \
+          --set-host-group=hg-{{ app_name }} \
+          {% if set_server_string|length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+      args:
+        chdir: "{{ installer_dir }}"
+        creates: "/opt/dynatrace/oneagent"
+      register: install_out
+
+    - name: Show installer output (first run)
+      ansible.builtin.debug:
+        var: install_out.stdout_lines
+      when: install_out is defined and install_out.stdout is defined
+
+    - name: Enable and start Dynatrace OneAgent service if present
+      ansible.builtin.service:
+        name: oneagent
+        enabled: true
+        state: started
+      register: svc_out
+      failed_when: false
+
+    - name: Note service handling result
+      ansible.builtin.debug:
+        msg: "Service attempt result: {{ svc_out | default('service not present') }}"
+      when: svc_out is defined
+
+  post_tasks:
+    - name: Unmount SMB share (if mounted)
+      ansible.posix.mount:
+        path: "{{ smb_mount }}"
+        state: unmounted
+      ignore_errors: true
+
+    - name: Remove temporary credentials file
+      ansible.builtin.file:
+        path: "/tmp/dt_smb_creds_{{ inventory_hostname }}"
+        state: absent
+      when: smb_creds_file is defined
+      ignore_errors: true
