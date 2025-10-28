@@ -1,0 +1,45 @@
+How to run this in AAP (quick checklist)
+
+Create Project in AAP containing this playbook.
+
+If you edit in-source, keep the playbook at project root or under playbooks/.
+
+Credentials:
+
+Machine credential (SSH/private key) to reach managed hosts, with sudo/become enabled.
+
+SMB credential: create a credential in AAP with the fields smb_username and smb_password. In the Job Template, add those as Extra Vars or map them via the Credential injection (set as extra vars like smb_username: "{{ credential.username }}" smb_password: "{{ credential.password }}" depending on your AAP setup).
+
+Alternatively pass smb_username/smb_password as masked extra vars in the Job Template.
+
+Inventory / Targeting:
+
+Use your AAP inventory to target the hosts (or set target_host as an extra var). If you plan to limit to one host at launch time, pass target_host or use the Job Template Limit.
+
+Execution Environment:
+
+Default EE is fine, it contains the mount and file modules. Ensure remote hosts have cifs-utils (playbook installs it where possible).
+
+Extra Vars (example) — set these in the Job Template or when launching:
+
+
+
+app_name: "myapp"
+network_zone: "nz-prod-general-azure"
+monitoring_mode: "fullstack"
+smb_username: "svc-dt"
+smb_password: "REDACTED"
+smb_share: "//fi.com/infotech/Software/Infrastructure/Dynatrace"
+
+
+Notes & caveats
+
+If your SMB share requires Kerberos/AD or domain options, you’ll need to adjust smb_opts (e.g., domain=MYDOM,sec=ntlmssp) or use a system-mounted share instead.
+
+The play uses a small temp credentials file to avoid passing creds on the command line; AAP will store the vars masked if you configure them properly.
+
+vers=3.0 is a common option — change if your server requires a different version.
+
+If your environment prohibits mounting remote shares from targets, consider Option B (bundle installer in project files) instead.
+
+The creates: "/opt/dynatrace/oneagent" prevents re-running the installer if the OneAgent folder is already present.
