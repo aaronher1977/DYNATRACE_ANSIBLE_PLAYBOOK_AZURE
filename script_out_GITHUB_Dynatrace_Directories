@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# create_dynatrace_dirs.sh
+# Creates full directory tree for Dynatrace OneAgent Ansible project
+
+set -e
+
+BASE="/opt/ansible/dynatrace-oneagent"
+
+echo "==> Creating Dynatrace OneAgent Ansible directory structure at $BASE ..."
+
+# Create directories
+install -d \
+  "$BASE" \
+  "$BASE/files" \
+  "$BASE/group_vars" \
+  "$BASE/inventories/test/group_vars" \
+  "$BASE/inventories/prod/group_vars" \
+  "$BASE/roles/dynatrace_oneagent/tasks" \
+  "$BASE/roles/dynatrace_oneagent/defaults"
+
+# Create placeholder files
+touch \
+  "$BASE/site.yml" \
+  "$BASE/.gitignore" \
+  "$BASE/README.md" \
+  "$BASE/group_vars/all.yml" \
+  "$BASE/inventories/test/hosts.ini" \
+  "$BASE/inventories/test/group_vars/all.yml" \
+  "$BASE/inventories/prod/hosts.ini" \
+  "$BASE/inventories/prod/group_vars/all.yml" \
+  "$BASE/roles/dynatrace_oneagent/README.md" \
+  "$BASE/roles/dynatrace_oneagent/defaults/main.yml" \
+  "$BASE/roles/dynatrace_oneagent/tasks/main.yml" \
+  "$BASE/roles/dynatrace_oneagent/tasks/install_from_ivanti.yml" \
+  "$BASE/roles/dynatrace_oneagent/tasks/cleanup.yml"
+
+# Add a simple README
+cat > "$BASE/README.md" <<'EOF'
+# Dynatrace OneAgent Installer (Ivanti Source)
+
+This repo contains an Ansible playbook that downloads and installs Dynatrace OneAgent from Ivanti.
+EOF
+
+echo "✅ Directory structure successfully created at: $BASE"
