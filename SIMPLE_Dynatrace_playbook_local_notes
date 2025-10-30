@@ -1,0 +1,75 @@
+For AAP 
+
+How to run in AAP
+
+Project: add this YAML (e.g., dynatrace_install.yml) to your repo.
+
+Job Template: select the playbook, your inventory & creds.
+
+(Optional) Extra Vars (Survey-friendly):
+
+
+app_name: myapp
+network_zone: nz-prod-general-azure
+monitoring_mode: fullstack
+set_server_string: ""
+installer_url: "https://ivanti.pi.com/configmgmt/Linux/Agents/Dynatrace/Dynatrace-OneAgent-Linux-1.3.19.76.20250819-104206.sh"
+validate_certs: false
+
+
+.
+
+🧩 2️⃣ Test Ansible availability
+
+Make sure Ansible is installed:
+
+ansible --version
+
+
+If not, install it:
+
+sudo dnf install -y ansible
+
+🧩 3️⃣ Run the playbook locally
+
+Now run the playbook targeting localhost, using a local connection:
+
+sudo ansible-playbook -i localhost, -c local dynatrace_install.yml
+
+
+Explanation:
+
+-i localhost, → treats your RHEL system as the target (no inventory file needed)
+
+-c local → uses a direct local connection (no SSH)
+
+sudo → ensures root privileges for installing and enabling the agent
+
+🧩 4️⃣ (Optional) Override variables at runtime
+
+You can override variables without editing the playbook, for example:
+
+sudo ansible-playbook -i localhost, -c local dynatrace_install.yml \
+  -e "app_name=myapp network_zone=nz-prod-general-azure monitoring_mode=fullstack \
+      installer_url=https://ivanti.pi.com/configmgmt/Linux/Agents/Dynatrace/Dynatrace-OneAgent-Linux-1.3.19.76.20250819-104206.sh \
+      validate_certs=false"
+
+🧩 5️⃣ Verify installation
+
+After it runs successfully, check:
+
+sudo systemctl status oneagent
+
+
+You should see something like:
+
+● oneagent.service - Dynatrace OneAgent
+   Loaded: loaded (/etc/systemd/system/oneagent.service; enabled)
+   Active: active (running)
+
+✅ Quick recap
+
+Command to run locally:
+
+sudo ansible-playbook -i localhost, -c local dynatrace_install.yml
+
