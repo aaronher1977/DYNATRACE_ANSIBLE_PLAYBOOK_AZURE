@@ -1,0 +1,133 @@
+
+---
+
+## 🧩 One Command to Build Everything
+
+Run this as **root or with sudo**:
+
+```bash
+bash -lc 'set -e; BASE="/opt/ansible/dynatrace-oneagent"; install -d "$BASE" "$BASE/files" "$BASE/group_vars" "$BASE/inventories/test/group_vars" "$BASE/inventories/prod/group_vars" "$BASE/roles/dynatrace_oneagent/tasks" "$BASE/roles/dynatrace_oneagent/defaults"; cat > "$BASE/site.yml" <<'"'"'EOF'
+---
+- name: Install Dynatrace OneAgent from Ivanti
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - dynatrace_oneagent
+EOF
+cat > "$BASE/group_vars/all.yml" <<'"'"'EOF'
+app_name: "myapp"
+network_zone: "nz-prod-general-azure"
+monitoring_mode: "fullstack"
+set_server_string: ""
+installer_dir: "/opt/dynatrace"
+agent_install_path_guard: "/opt/dynatrace/oneagent"
+validate_certs: true
+EOF
+cat > "$BASE/inventories/test/hosts.ini" <<'"'"'EOF'
+[test]
+testserver1 ansible_host=10.10.10.5
+EOF
+cat > "$BASE/inventories/test/group_vars/all.yml" <<'"'"'EOF'
+network_zone: "nz-test"
+EOF
+cat > "$BASE/inventories/prod/hosts.ini" <<'"'"'EOF'
+[prod]
+prodserver1 ansible_host=10.10.20.10
+EOF
+cat > "$BASE/inventories/prod/group_vars/all.yml" <<'"'"'EOF'
+network_zone: "nz-prod-general-azure"
+EOF
+cat > "$BASE/roles/dynatrace_oneagent/defaults/main.yml" <<'"'"'EOF'
+installer_url: "https://ivanti.ia.com/configmgmt/Linux/Dynatrace/Dynatrace-OneAgent-Linux-1.319.76.20250819-104206.sh"
+validate_certs: true
+url_username: ""
+url_password: ""
+installer_dir: "/opt/dynatrace"
+agent_install_path_guard: "/opt/dynatrace/oneagent"
+app_name: "myapp"
+network_zone: "nz-prod-general-azure"
+monitoring_mode: "fullstack"
+set_server_string: ""
+EOF
+cat > "$BASE/roles/dynatrace_oneagent/tasks/main.yml" <<'"'"'EOF'
+---
+- import_tasks: install_from_ivanti.yml
+- import_tasks: cleanup.yml
+EOF
+cat > "$BASE/roles/dynatrace_oneagent/tasks/install_from_ivanti.yml" <<'"'"'EOF'
+---
+- name: Derive filename from URL
+  set_fact:
+    installer_filename: "{{ installer_url | basename }}"
+
+- name: Ensure installer directory exists
+  file:
+    path: "{{ installer_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Download Dynatrace OneAgent installer from Ivanti
+  get_url:
+    url: "{{ installer_url }}"
+    dest: "{{ installer_dir }}/{{ installer_filename }}"
+    mode: "0755"
+    validate_certs: "{{ validate_certs }}"
+    url_username: "{{ url_username | default(omit) }}"
+    url_password: "{{ url_password | default(omit) }}"
+    timeout: 60
+    force: no
+  register: download_out
+  retries: 3
+  delay: 5
+  until: download_out is succeeded
+
+- name: Run Dynatrace OneAgent installer (idempotent)
+  shell: >
+    /bin/sh "{{ installer_dir }}/{{ installer_filename }}"
+    --set-monitoring-mode={{ monitoring_mode }}
+    --set-app-log-content-access=true
+    --set-network-zone={{ network_zone }}
+    --set-host-group=hg-{{ app_name }}
+    {% if set_server_string | length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+  args:
+    chdir: "{{ installer_dir }}"
+    creates: "{{ agent_install_path_guard }}"
+  register: install_out
+
+- name: Show installer output (first run only)
+  debug:
+    var: install_out.stdout_lines
+  when: install_out is defined and install_out.stdout is defined
+
+- name: Enable and start Dynatrace OneAgent service (don’t fail if missing)
+  service:
+    name: oneagent
+    enabled: true
+    state: started
+  failed_when: false
+EOF
+cat > "$BASE/roles/dynatrace_oneagent/tasks/cleanup.yml" <<'"'"'EOF'
+---
+- name: Remove installer file after successful install
+  file:
+    path: "{{ installer_dir }}/{{ installer_filename }}"
+    state: absent
+  when: install_out is defined and install_out.rc == 0
+EOF
+cat > "$BASE/roles/dynatrace_oneagent/README.md" <<'"'"'EOF'
+# Dynatrace OneAgent Role
+Installs Dynatrace OneAgent on Linux servers by downloading the installer from Ivanti.
+EOF
+cat > "$BASE/.gitignore" <<'"'"'EOF'
+*.retry
+*.log
+__pycache__/
+*.pyc
+.env
+EOF
+cat > "$BASE/README.md" <<'"'"'EOF'
+# Dynatrace OneAgent Installer (Ivanti Source)
+This repository contains an Ansible playbook and role that download and install the Dynatrace OneAgent from an Ivanti repository.
+EOF
+echo "✅ Created fully populated project at: $BASE"'
