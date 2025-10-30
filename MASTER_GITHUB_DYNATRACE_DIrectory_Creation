@@ -36,7 +36,7 @@ monitoring_mode: "fullstack"
 set_server_string: ""
 installer_dir: "/opt/dynatrace"
 agent_install_path_guard: "/opt/dynatrace/oneagent"
-validate_certs: true
+# validate_certs isn't used in the loop below; task sets validate_certs: no explicitly.
 EOF
 
 # inventories/test/hosts.ini
@@ -63,16 +63,18 @@ EOF
 
 # role defaults
 cat > "$BASE/roles/dynatrace_oneagent/defaults/main.yml" <<'EOF'
+# Point to the exact filename you expect on the Ivanti server
 installer_url: "https://ivanti.ia.com/configmgmt/Linux/Dynatrace/Dynatrace-OneAgent-Linux-1.319.76.20250819-104206.sh"
-validate_certs: true
-url_username: ""
-url_password: ""
+
+# Download & install locations
 installer_dir: "/opt/dynatrace"
 agent_install_path_guard: "/opt/dynatrace/oneagent"
+
+# Dynatrace settings
 app_name: "myapp"
 network_zone: "nz-prod-general-azure"
-monitoring_mode: "fullstack"
-set_server_string: ""
+monitoring_mode: "fullstack"   # or "infrastructure"
+set_server_string: ""           # e.g. "activegate.company.com:9999"
 EOF
 
 # role tasks main
@@ -82,7 +84,7 @@ cat > "$BASE/roles/dynatrace_oneagent/tasks/main.yml" <<'EOF'
 - import_tasks: cleanup.yml
 EOF
 
-# role tasks: install_from_ivanti.yml
+# role tasks: install_from_ivanti.yml (UPDATED PER YOUR REQUEST)
 cat > "$BASE/roles/dynatrace_oneagent/tasks/install_from_ivanti.yml" <<'EOF'
 ---
 - name: Derive filename from URL
@@ -93,18 +95,25 @@ cat > "$BASE/roles/dynatrace_oneagent/tasks/install_from_ivanti.yml" <<'EOF'
   file:
     path: "{{ installer_dir }}"
     state: directory
-    mode: "0755"
+    mode: '0755'
 
-- name: Download Dynatrace OneAgent installer from Ivanti
-  get_url:
-    url: "{{ installer_url }}"
-    dest: "{{ installer_dir }}/{{ installer_filename }}"
-    mode: "0755"
-    validate_certs: "{{ validate_certs }}"
-    url_username: "{{ url_username | default(omit) }}"
-    url_password: "{{ url_password | default(omit) }}"
-    timeout: 60
+- name: Prepare Dynatrace download list
+  set_fact:
+    base_url: "https://ivanti.ia.com/configmgmt/Linux/Dynatrace"
+    download_path: "{{ installer_dir }}"
+    dynatrace_files:
+      - { folder: "", files: [ "{{ installer_filename }}" ] }
+
+- name: Download Dynatrace OneAgent installer using get_url loop
+  ansible.builtin.get_url:
+    url: "{{ base_url }}/{{ item.0.folder }}/{{ item.1 }}"
+    dest: "{{ download_path }}/{{ item.0.folder }}/{{ item.1 }}"
+    mode: '0755'
     force: no
+    validate_certs: no
+  with_subelements:
+    - "{{ dynatrace_files }}"
+    - files
   register: download_out
   retries: 3
   delay: 5
@@ -149,7 +158,7 @@ EOF
 # role README
 cat > "$BASE/roles/dynatrace_oneagent/README.md" <<'EOF'
 # Dynatrace OneAgent Role
-Installs Dynatrace OneAgent on Linux servers by downloading the installer from Ivanti.
+Installs Dynatrace OneAgent on Linux servers by downloading the installer from Ivanti (loop-based download).
 EOF
 
 # .gitignore
@@ -164,7 +173,7 @@ EOF
 # top-level README
 cat > "$BASE/README.md" <<'EOF'
 # Dynatrace OneAgent Installer (Ivanti Source)
-This project contains an Ansible playbook and role that download and install the Dynatrace OneAgent from an Ivanti repository.
+This project contains an Ansible playbook and role that download and install the Dynatrace OneAgent from an Ivanti repository using a looped get_url task.
 EOF
 
 echo "✅ Created fully populated project at: $BASE"
