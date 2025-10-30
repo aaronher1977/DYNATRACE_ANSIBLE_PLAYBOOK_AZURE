@@ -1,0 +1,108 @@
+---
+- name: Download Security Agent RPMs
+  hosts: all
+  gather_facts: true
+  vars:
+    base_url: "https://ivanti.fi.com/ConfigMgmt/Linux/Agents/"
+    download_path: "/tmp/agents"
+    agent_to_install: "{{ agent_choice | default('all') }}"
+  vars_files:
+   - ../group_vars/secureVar.yml
+  
+  tasks:
+    - name: Set agent folders based on selection
+      set_fact:
+        agent_folders: "{{ [agent_to_install] if agent_to_install != 'all' else ['Dynatrace', 'Guardicore', 'SentinelOne', 'Splunk', 'Tenable'] }}"
+
+    - name: Display selected agent for installation
+      ansible.builtin.debug:
+        msg: "Downloading and installing agent(s): {{ agent_to_install }} on {{ inventory_hostname }}"
+
+    - name: Create local download directory
+      ansible.builtin.file:
+        path: "{{ download_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create directory for each agent
+      ansible.builtin.file:
+        path: "{{ download_path }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ agent_folders }}"
+
+    - name: Get directory listing for each agent folder
+      ansible.builtin.uri:
+        url: "{{ base_url }}/{{ item }}/"
+        return_content: yes
+        validate_certs: no
+      loop: "{{ agent_folders }}"
+      register: directory_listings
+
+    - name: Parse HTML to extract RPM files only
+      set_fact:
+        files_to_download: "{{ files_to_download | default([]) + [dict(folder=item.item, files=item.content | regex_findall('([\\w\\-\\.]+\\.rpm)') | unique | list)] }}"
+      loop: "{{ directory_listings.results }}"
+      when: item.status == 200
+
+    - name: Debug parsed RPM files
+      ansible.builtin.debug:
+        msg: "{{ files_to_download }}"
+
+    - name: Download RPM files using get_url
+      ansible.builtin.get_url:
+        url: "{{ base_url }}/{{ item.0.folder }}/{{ item.1 }}"
+        dest: "{{ download_path }}/{{ item.0.folder }}/{{ item.1 }}"
+        mode: '0644'
+        force: no
+        validate_certs: no
+      loop: "{{ files_to_download | default([]) | subelements('files', skip_missing=True) }}"
+      when: 
+        - files_to_download is defined
+        - files_to_download | length > 0
+        - item.1 is defined
+        - item.1 != ''
+      register: download_results
+      ignore_errors: yes
+      become: yes
+
+    - name: Show download summary
+      ansible.builtin.debug:
+        msg: "Downloaded {{ download_results.results | default([]) | selectattr('changed', 'equalto', true) | list | length }} RPM files"
+      when: download_results is defined
+
+    - name: List all downloaded RPM files
+      ansible.builtin.find:
+        paths: "{{ download_path }}"
+        recurse: yes
+        file_type: file
+        patterns: "*.rpm"
+      register: downloaded_files
+
+    - name: Show download summary
+      ansible.builtin.debug:
+        msg: 
+          - "Download location: {{ download_path }}"
+          - "Total RPM files: {{ downloaded_files.files | length }}"
+          - "Agent selected: {{ agent_to_install }}"
+
+    # Installation tasks - directly from downloaded RPMs
+    - name: Install Guardicore agent
+      ansible.builtin.include_tasks: tasks/install_guardicore.yml
+      when: agent_to_install == "Guardicore" or agent_to_install == "all"
+
+    - name: Install SentinelOne agent
+      ansible.builtin.include_tasks: tasks/install_sentinelone.yml
+      when: agent_to_install == "SentinelOne" or agent_to_install == "all"
+
+    - name: Install Splunk agent
+      ansible.builtin.include_tasks: tasks/install_splunk.yml
+      when: agent_to_install == "Splunk" or agent_to_install == "all"
+
+    - name: Install Dynatrace agent
+      ansible.builtin.include_tasks: tasks/install_dynatrace.yml
+      when: agent_to_install == "Dynatrace" or agent_to_install == "all"
+
+    - name: Install Tenable agent
+      ansible.builtin.include_tasks: tasks/install_tenable.yml
+      when: agent_to_install == "Tenable" or agent_to_install == "all"
