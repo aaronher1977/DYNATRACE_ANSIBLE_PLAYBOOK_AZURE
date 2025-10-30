@@ -1,0 +1,80 @@
+---
+- name: Install Dynatrace OneAgent (download from Ivanti)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    # ====== Source of the installer ======
+    installer_url: "https://ivanti.ia.com/configmgmt/Linux/Dynatrace/Dynatrace-OneAgent-Linux-1.319.76.20250819-104206.sh"
+
+    # If Ivanti uses a self-signed cert, flip this to false (or pass as an extra var)
+    validate_certs: true
+
+    # Optional basic auth to Ivanti (prefer injecting via AAP Credential or extra vars)
+    url_username: ""
+    url_password: ""
+
+    # ====== Local install layout & idempotency ======
+    installer_dir: "/opt/dynatrace"
+    agent_install_path_guard: "/opt/dynatrace/oneagent"
+
+    # ====== Dynatrace agent settings ======
+    app_name: "myapp"
+    network_zone: "nz-prod-general-azure"
+    monitoring_mode: "fullstack"   # or "infrastructure"
+    set_server_string: ""           # e.g. "activegate.company.com:9999"
+
+  pre_tasks:
+    - name: Derive filename from URL
+      set_fact:
+        installer_filename: "{{ installer_url | basename }}"
+
+  tasks:
+    - name: Ensure installer directory exists
+      file:
+        path: "{{ installer_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download Dynatrace OneAgent installer from Ivanti
+      get_url:
+        url: "{{ installer_url }}"
+        dest: "{{ installer_dir }}/{{ installer_filename }}"
+        mode: '0755'
+        validate_certs: "{{ validate_certs }}"
+        # If your Ivanti host requires basic auth, set url_username/url_password vars (prefer AAP Credential)
+        url_username: "{{ url_username | default(omit) }}"
+        url_password: "{{ url_password | default(omit) }}"
+        # checksum: "sha256:<paste_expected_sha256_here>"   # <- recommended if you have it
+        timeout: 60
+        force: no
+      register: download_out
+      retries: 3
+      delay: 5
+      until: download_out is succeeded
+
+    - name: Run Dynatrace OneAgent installer (idempotent)
+      shell: >
+        /bin/sh "{{ installer_dir }}/{{ installer_filename }}"
+        --set-monitoring-mode={{ monitoring_mode }}
+        --set-app-log-content-access=true
+        --set-network-zone={{ network_zone }}
+        --set-host-group=hg-{{ app_name }}
+        {% if set_server_string | length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+      args:
+        chdir: "{{ installer_dir }}"
+        creates: "{{ agent_install_path_guard }}"
+      register: install_out
+
+    - name: Show installer output (first run only)
+      debug:
+        var: install_out.stdout_lines
+      when: install_out is defined and install_out.stdout is defined
+
+    - name: Enable and start Dynatrace OneAgent service (don’t fail if missing)
+      service:
+        name: oneagent
+        enabled: true
+        state: started
+      failed_when: false
