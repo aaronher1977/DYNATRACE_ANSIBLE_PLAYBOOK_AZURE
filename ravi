@@ -1,0 +1,7 @@
+- name: Download RPM files using get_url
+      ansible.builtin.get_url:
+        url: "{{ base_url }}/{{ item.0.folder }}/{{ item.1 }}"
+        dest: "{{ download_path }}/{{ item.0.folder }}/{{ item.1 }}"
+        mode: '0644'
+        force: no
+        validate_certs: no
