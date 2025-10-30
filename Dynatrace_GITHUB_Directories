@@ -1,31 +1,184 @@
-bash -lc 'set -e; B=dynatrace-oneagent; mkdir -p "$B"/{files,group_vars,roles/dynatrace_oneagent/{tasks,defaults},inventories/{test/{group_vars},prod/{group_vars}}}; touch "$B"/{site.yml,README.md,.gitignore} "$B"/roles/dynatrace_oneagent/{README.md,defaults/main.yml,tasks/{main.yml,install_from_ivanti.yml,cleanup.yml}} "$B"/inventories/test/{hosts.ini,group_vars/all.yml} "$B"/inventories/prod/{hosts.ini,group_vars/all.yml} "$B"/group_vars/all.yml; echo -e \"# Dynatrace OneAgent Installer (Ivanti Source)\\nThis repo contains an Ansible playbook that downloads and installs Dynatrace OneAgent from Ivanti.\\n\" > \"$B\"/README.md'
+#!/usr/bin/env bash
+# ===============================================================
+# dynatrace_project_setup.sh
+# ---------------------------------------------------------------
+# Creates full Ansible project structure for Dynatrace OneAgent
+# installation (usable locally or in Ansible Automation Platform)
+# ===============================================================
 
-bash -lc 'set -e; BASE="/opt/ansible/dynatrace-oneagent"; install -d "$BASE" "$BASE/files" "$BASE/group_vars" "$BASE/inventories/test/group_vars" "$BASE/inventories/prod/group_vars" "$BASE/roles/dynatrace_oneagent/tasks" "$BASE/roles/dynatrace_oneagent/defaults"; : > "$BASE/site.yml"; : > "$BASE/.gitignore"; : > "$BASE/README.md"; : > "$BASE/group_vars/all.yml"; : > "$BASE/inventories/test/hosts.ini"; : > "$BASE/inventories/test/group_vars/all.yml"; : > "$BASE/inventories/prod/hosts.ini"; : > "$BASE/inventories/prod/group_vars/all.yml"; : > "$BASE/roles/dynatrace_oneagent/README.md"; : > "$BASE/roles/dynatrace_oneagent/defaults/main.yml"; : > "$BASE/roles/dynatrace_oneagent/tasks/main.yml"; : > "$BASE/roles/dynatrace_oneagent/tasks/install_from_ivanti.yml"; : > "$BASE/roles/dynatrace_oneagent/tasks/cleanup.yml"; printf "# Dynatrace OneAgent Installer (Ivanti Source)\nThis repo contains an Ansible playbook that downloads and installs Dynatrace OneAgent from Ivanti.\n" > "$BASE/README.md"; echo "Created at: $BASE"'
+set -euo pipefail
 
-dynatrace-oneagent/
-├── site.yml
-├── files/
-├── group_vars/
-├── inventories/
-│   ├── test/
-│   │   ├── hosts.ini
-│   │   └── group_vars/all.yml
-│   └── prod/
-│       ├── hosts.ini
-│       └── group_vars/all.yml
-├── roles/
-│   └── dynatrace_oneagent/
-│       ├── defaults/main.yml
-│       ├── tasks/
-│       │   ├── main.yml
-│       │   ├── install_from_ivanti.yml
-│       │   └── cleanup.yml
-│       └── README.md
-├── .gitignore
-└── README.md
+# ==== Configuration ====
+PROJECT_ROOT="dynatrace-oneagent"
+ROLE_NAME="dynatrace_oneagent"
+INSTALLER_NAME="Dynatrace-OneAgent-Linux-1.303.50.sh"
 
+# ==== Create folder structure ====
+echo "==> Creating Ansible project structure under $PROJECT_ROOT"
+mkdir -p ${PROJECT_ROOT}/{roles/${ROLE_NAME}/{defaults,tasks,files},inventories/{test,prod}/group_vars,group_vars}
+touch ${PROJECT_ROOT}/{site.yml,README.md,.gitignore}
 
+# ==== Create inventory files ====
+cat > ${PROJECT_ROOT}/inventories/test/hosts.ini <<'EOF'
+[test]
+localhost ansible_connection=local
+EOF
 
-Adds placeholders for all files you’ll later fill (e.g., your playbook goes into site.yml).
+cat > ${PROJECT_ROOT}/inventories/prod/hosts.ini <<'EOF'
+[prod]
+# Add your production hosts here, for example:
+# server1 ansible_host=10.10.10.10
+EOF
 
-Ready for git add ., git commit, and git push into your GitHub repo branch.
+# ==== Create default vars ====
+cat > ${PROJECT_ROOT}/roles/${ROLE_NAME}/defaults/main.yml <<'EOF'
+---
+app_name: "myapp"
+network_zone: "nz-prod-general-azure"
+monitoring_mode: "fullstack"
+set_server_string: ""
+installer_dir: "/opt/dynatrace"
+agent_install_path_guard: "/opt/dynatrace/oneagent"
+installer_source: "project"
+installer_filename: "Dynatrace-OneAgent-Linux-1.303.50.sh"
+base_url: "https://ivanti.fi.com/ConfigMgmt/Linux/Agents"
+remote_folder: "Dynatrace"
+remote_installer_filename: "Dynatrace-OneAgent-Linux-1.303.50.sh"
+validate_certs: false
+EOF
+
+# ==== Create main playbook (site.yml) ====
+cat > ${PROJECT_ROOT}/site.yml <<'EOF'
+---
+- name: Install Dynatrace OneAgent (AAP or local)
+  hosts: "{{ target_host | default('all') }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    app_name: "{{ app_name }}"
+    network_zone: "{{ network_zone }}"
+    monitoring_mode: "{{ monitoring_mode }}"
+    set_server_string: "{{ set_server_string }}"
+    installer_dir: "{{ installer_dir }}"
+    agent_install_path_guard: "{{ agent_install_path_guard }}"
+    installer_source: "{{ installer_source }}"
+    installer_filename: "{{ installer_filename }}"
+    base_url: "{{ base_url }}"
+    remote_folder: "{{ remote_folder }}"
+    remote_installer_filename: "{{ remote_installer_filename }}"
+    validate_certs: "{{ validate_certs }}"
+
+  roles:
+    - dynatrace_oneagent
+EOF
+
+# ==== Create main task file ====
+cat > ${PROJECT_ROOT}/roles/${ROLE_NAME}/tasks/main.yml <<'EOF'
+---
+- name: Who am I (sanity check)
+  command: whoami
+  register: whoami_out
+
+- debug:
+    var: whoami_out.stdout
+
+- name: Ensure installer directory exists
+  file:
+    path: "{{ installer_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Derive effective remote URL when using 'url' source
+  set_fact:
+    effective_installer_url: >-
+      {{ (installer_url | length > 0)
+         | ternary(installer_url,
+                   base_url ~ '/' ~ remote_folder ~ '/' ~ remote_installer_filename) }}
+  when: installer_source == "url"
+
+- name: Derive filename from chosen source
+  set_fact:
+    effective_installer_filename: >-
+      {{ (installer_source == 'project')
+          | ternary(installer_filename,
+                    (effective_installer_url | basename)) }}
+
+- name: Stage OneAgent installer from project files
+  copy:
+    src: "files/{{ installer_filename }}"
+    dest: "{{ installer_dir }}/{{ installer_filename }}"
+    mode: '0755'
+  when: installer_source == "project"
+
+- name: Download OneAgent installer from URL
+  get_url:
+    url: "{{ effective_installer_url }}"
+    dest: "{{ installer_dir }}/{{ effective_installer_filename }}"
+    mode: '0755'
+    force: no
+    validate_certs: "{{ validate_certs }}"
+  register: download_out
+  retries: 3
+  delay: 5
+  until: download_out is succeeded
+  when: installer_source == "url"
+
+- name: Work out installer extension
+  set_fact:
+    installer_path: "{{ installer_dir }}/{{ (installer_source == 'project') | ternary(installer_filename, effective_installer_filename) }}"
+    installer_ext: >-
+      {{
+        ( ( (installer_source == 'project') | ternary(installer_filename, effective_installer_filename) )
+           | regex_search('\\.(sh|rpm)$') ) | default('.sh')
+      }}
+
+- name: Install Dynatrace OneAgent from .sh (idempotent)
+  shell: >
+    /bin/sh "{{ installer_path }}"
+    --set-monitoring-mode={{ monitoring_mode }}
+    --set-app-log-content-access=true
+    --set-network-zone={{ network_zone }}
+    --set-host-group=hg-{{ app_name }}
+    {% if set_server_string | length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+  args:
+    chdir: "{{ installer_dir }}"
+    creates: "{{ agent_install_path_guard }}"
+  register: install_out_sh
+  when: installer_ext == '.sh'
+
+- name: Install Dynatrace OneAgent from .rpm (idempotent)
+  package:
+    name: "{{ installer_path }}"
+    state: present
+  register: install_out_rpm
+  when: installer_ext == '.rpm'
+
+- name: Show installer output (first run, .sh)
+  debug:
+    var: install_out_sh.stdout_lines
+  when: install_out_sh is defined and install_out_sh.stdout is defined
+
+- name: Enable and start Dynatrace service if present
+  service:
+    name: oneagent
+    enabled: true
+    state: started
+  register: svc_out
+  failed_when: false
+
+- name: Note service handling result
+  debug:
+    msg: "Service attempt result: {{ svc_out | default('service not present') }}"
+  when: svc_out is defined
+EOF
+
+# ==== Create README for clarity ====
+cat > ${PROJECT_ROOT}/README.md <<'EOF'
+# Dynatrace OneAgent Installation Playbook
+
+This Ansible project supports both:
+- Running **locally** on RHEL hosts
+- Running via **Ansible Automation Platform (AAP)**
+
+## Folder Structure
