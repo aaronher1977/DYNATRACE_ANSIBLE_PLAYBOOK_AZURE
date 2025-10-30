@@ -1,0 +1,30 @@
+bash -lc 'set -e; B=dynatrace-oneagent; mkdir -p "$B"/{files,group_vars,roles/dynatrace_oneagent/{tasks,defaults},inventories/{test/{group_vars},prod/{group_vars}}}; touch "$B"/{site.yml,README.md,.gitignore} "$B"/roles/dynatrace_oneagent/{README.md,defaults/main.yml,tasks/{main.yml,install_from_ivanti.yml,cleanup.yml}} "$B"/inventories/test/{hosts.ini,group_vars/all.yml} "$B"/inventories/prod/{hosts.ini,group_vars/all.yml} "$B"/group_vars/all.yml; echo -e \"# Dynatrace OneAgent Installer (Ivanti Source)\\nThis repo contains an Ansible playbook that downloads and installs Dynatrace OneAgent from Ivanti.\\n\" > \"$B\"/README.md'
+
+
+dynatrace-oneagent/
+├── site.yml
+├── files/
+├── group_vars/
+├── inventories/
+│   ├── test/
+│   │   ├── hosts.ini
+│   │   └── group_vars/all.yml
+│   └── prod/
+│       ├── hosts.ini
+│       └── group_vars/all.yml
+├── roles/
+│   └── dynatrace_oneagent/
+│       ├── defaults/main.yml
+│       ├── tasks/
+│       │   ├── main.yml
+│       │   ├── install_from_ivanti.yml
+│       │   └── cleanup.yml
+│       └── README.md
+├── .gitignore
+└── README.md
+
+
+
+Adds placeholders for all files you’ll later fill (e.g., your playbook goes into site.yml).
+
+Ready for git add ., git commit, and git push into your GitHub repo branch.
