@@ -1,0 +1,82 @@
+---
+- name: Install Dynatrace OneAgent from Ivanti (AAP-ready)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    # ----- REQUIRED: adjust as needed (or pass via Extra Vars/Survey) -----
+    app_name: "myapp"
+    network_zone: "nz-prod-general-azure"
+    monitoring_mode: "fullstack"           # or "infrastructure"
+    set_server_string: ""                   # e.g., "activegate.company.com:9999" (optional)
+
+    # Where to stage the installer & how we detect first run
+    installer_dir: "/opt/dynatrace"
+    agent_install_path_guard: "/opt/dynatrace/oneagent"
+
+    # Ivanti URL (given)
+    installer_url: "https://ivanti.pi.com/configmgmt/Linux/Agents/Dynatrace/Dynatrace-OneAgent-Linux-1.3.19.76.20250819-104206.sh"
+
+    # TLS/Proxy controls
+    validate_certs: false                   # set true if Ivanti has trusted certs
+    http_proxy: ""                          # e.g., http://proxy:8080
+    https_proxy: ""                         # e.g., http://proxy:8080
+
+  pre_tasks:
+    - name: Ensure installer directory exists
+      ansible.builtin.file:
+        path: "{{ installer_dir }}"
+        state: directory
+        mode: '0755'
+
+  tasks:
+    - name: Download Dynatrace OneAgent installer from Ivanti
+      ansible.builtin.get_url:
+        url: "{{ installer_url }}"
+        dest: "{{ installer_dir }}/{{ installer_url | basename }}"
+        mode: '0755'
+        force: no
+        validate_certs: "{{ validate_certs }}"
+        timeout: 60
+      environment: >-
+        {{
+          dict()
+          | combine(http_proxy|length > 0 | ternary({'http_proxy': http_proxy}, {}))
+          | combine(https_proxy|length > 0 | ternary({'https_proxy': https_proxy}, {}))
+        }}
+      register: download_out
+      retries: 3
+      delay: 5
+      until: download_out is succeeded
+
+    - name: Run Dynatrace OneAgent installer (idempotent)
+      ansible.builtin.shell: >
+        /bin/sh "{{ installer_dir }}/{{ installer_url | basename }}"
+        --set-monitoring-mode={{ monitoring_mode }}
+        --set-app-log-content-access=true
+        --set-network-zone={{ network_zone }}
+        --set-host-group=hg-{{ app_name }}
+        {% if set_server_string | length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+      args:
+        chdir: "{{ installer_dir }}"
+        creates: "{{ agent_install_path_guard }}"
+      register: install_out
+
+    - name: Show installer output (first run)
+      ansible.builtin.debug:
+        var: install_out.stdout_lines
+      when: install_out is defined and install_out.stdout is defined
+
+    - name: Enable and start Dynatrace OneAgent service if present
+      ansible.builtin.service:
+        name: oneagent
+        enabled: true
+        state: started
+      register: svc_out
+      failed_when: false
+
+    - name: Note service handling result
+      ansible.builtin.debug:
+        msg: "Service attempt result: {{ svc_out | default('service not present') }}"
+      when: svc_out is defined
