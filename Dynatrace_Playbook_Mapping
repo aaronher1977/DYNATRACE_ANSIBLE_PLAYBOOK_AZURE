@@ -1,16 +1,16 @@
 ---
-- name: Install Dynatrace OneAgent from Ivanti (AAP-ready, environment-aware)
+- name: Install Dynatrace OneAgent from Ivanti (AAP-ready, env-aware, with pre/post checks)
   hosts: all
   become: true
   gather_facts: false
 
   vars:
-    # ----- REQUIRED INPUTS (override in AAP or CLI) -----
-    app_name: "unknown"                    # if not known, stays 'unknown'
-    env_type: "fidev_east"                 # e.g., fidev_east, fidev_west, prod_west, sit_west, uat_west
+    # ===== Inputs (override via AAP Survey or -e) =====
+    app_name: "unknown"      # if unknown, leave as 'unknown'
+    env_type: "fidev_east"   # one of: fidev_east, fidev_west, prod_west, sit_west, uat_west
     installer_url: "https://ivanti.pi.com/configmgmt/Linux/Agents/Dynatrace/Dynatrace-OneAgent-Linux-1.3.19.76.20250819-104206.sh"
 
-    # ----- Common install parameters -----
+    # ===== Common install params =====
     installer_dir: "/opt/dynatrace"
     agent_install_path_guard: "/opt/dynatrace/oneagent"
     validate_certs: false
@@ -18,7 +18,7 @@
     infra_only: "FALSE"
     app_log_content_access: "FALSE"
 
-    # ----- Environment-based mapping -----
+    # ===== Environment mapping =====
     dynatrace_env_map:
       fidev_east:
         network_zone: "nz-fidev-vnext-e1-pxy-azure"
@@ -37,16 +37,55 @@
         server_ip: "10.12.8.105"
 
   pre_tasks:
-    - name: Verify environment type exists in map
+    # ---------- PRE-FLIGHT: validate inputs & compute env settings ----------
+    - name: Fail if env_type not in map
       ansible.builtin.assert:
-        that:
-          - dynatrace_env_map[env_type] is defined
-        fail_msg: "Unknown environment type '{{ env_type }}'. Please set one of: fidev_east, fidev_west, prod_west, sit_west, uat_west."
+        that: dynatrace_env_map[env_type] is defined
+        fail_msg: "Unknown env_type='{{ env_type }}'. Use one of: {{ dynatrace_env_map.keys() | list }}"
+
+    - name: Normalize empty app_name to 'unknown'
+      ansible.builtin.set_fact:
+        app_name: "{{ (app_name | trim) | default('unknown') | ternary(app_name | trim, 'unknown') }}"
+      when: (app_name is string) and (app_name | trim | length == 0)
 
     - name: Set network zone and server string based on environment
       ansible.builtin.set_fact:
         network_zone: "{{ dynatrace_env_map[env_type].network_zone }}"
         set_server_string: "{{ dynatrace_env_map[env_type].server_ip }}"
+
+    - name: Validate network_zone matches mapping
+      ansible.builtin.assert:
+        that:
+          - network_zone == dynatrace_env_map[env_type].network_zone
+        fail_msg: "Network zone mismatch for {{ env_type }}. Expected {{ dynatrace_env_map[env_type].network_zone }}, got {{ network_zone }}"
+
+    - name: Validate set_server_string is empty, IP, or IP:port
+      vars:
+        _is_ip_only: "{{ set_server_string | regex_search('^\\d+\\.\\d+\\.\\d+\\.\\d+$') is not none }}"
+        _is_ip_port: "{{ set_server_string | regex_search('^\\d+\\.\\d+\\.\\d+\\.\\d+:\\d+$') is not none }}"
+      ansible.builtin.assert:
+        that:
+          - set_server_string | length == 0 or _is_ip_only or _is_ip_port
+        fail_msg: "set_server_string must be empty or IP or IP:port (e.g., 10.22.8.101 or 10.22.8.101:9999). Current: '{{ set_server_string }}'"
+
+    - name: Derive ActiveGate host/port for connectivity check (best-effort)
+      ansible.builtin.set_fact:
+        _ag_host: "{{ (set_server_string | length == 0) | ternary('', (set_server_string.split(':') | first)) }}"
+        _ag_port: >-
+          {{
+            (set_server_string | length == 0)
+              | ternary('', (set_server_string is search(':')) | ternary(set_server_string.split(':')[-1], '9999'))
+          }}
+
+    - name: Check ActiveGate TCP connectivity (skip if no server defined)
+      ansible.builtin.wait_for:
+        host: "{{ _ag_host }}"
+        port: "{{ _ag_port | int }}"
+        timeout: 5
+        state: started
+      when: set_server_string | length > 0
+      register: _ag_conn
+      failed_when: false
 
     - name: Ensure installer directory exists
       ansible.builtin.file:
@@ -54,7 +93,19 @@
         state: directory
         mode: '0755'
 
+    - name: Show planned installer command (preview)
+      ansible.builtin.debug:
+        msg: >
+          /bin/sh "{{ installer_dir }}/{{ installer_url | basename }}"
+          --set-monitoring-mode={{ monitoring_mode }}
+          --set-infra-only={{ infra_only }}
+          --set-app-log-content-access={{ app_log_content_access }}
+          --set-network-zone={{ network_zone }}
+          --set-host-group=hg-{{ app_name }}-{{ env_type }}
+          {% if set_server_string | length > 0 %} --set-server="{{ set_server_string }}" {% endif %}
+
   tasks:
+    # ------------------- INSTALL -------------------
     - name: Download Dynatrace OneAgent installer from Ivanti
       ansible.builtin.get_url:
         url: "{{ installer_url }}"
@@ -99,3 +150,45 @@
       ansible.builtin.debug:
         msg: "Service attempt result: {{ svc_out | default('service not present') }}"
       when: svc_out is defined
+
+  post_tasks:
+    # ---------- POST-FLIGHT: verify applied settings ----------
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert oneagent service is running
+      ansible.builtin.assert:
+        that:
+          - services['oneagent.service'] is defined
+          - services['oneagent.service'].state == 'running'
+        fail_msg: "oneagent.service not running. Check installer logs."
+
+    - name: Locate oneagentctl (common paths)
+      ansible.builtin.shell: |
+        set -o pipefail
+        command -v oneagentctl || \
+        test -x /opt/dynatrace/oneagent/agent/tools/oneagentctl && echo /opt/dynatrace/oneagent/agent/tools/oneagentctl || true
+      args:
+        executable: /bin/bash
+      register: oneagentctl_path
+      changed_when: false
+
+    - name: Read current host-group (best-effort)
+      ansible.builtin.command: "{{ oneagentctl_path.stdout }} --get-host-group"
+      register: hg_out
+      failed_when: false
+      when: oneagentctl_path.stdout | length > 0
+
+    - name: Read current network zone (best-effort)
+      ansible.builtin.command: "{{ oneagentctl_path.stdout }} --get-network-zone"
+      register: nz_out
+      failed_when: false
+      when: oneagentctl_path.stdout | length > 0
+
+    - name: Show expected vs reported Dynatrace settings
+      ansible.builtin.debug:
+        msg:
+          - "Host group (expected): hg-{{ app_name }}-{{ env_type }}"
+          - "Host group (reported): {{ (hg_out.stdout | default('n/a')) | trim }}"
+          - "Network zone (expected): {{ network_zone }}"
+          - "Network zone (reported): {{ (nz_out.stdout | default('n/a')) | trim }}"
